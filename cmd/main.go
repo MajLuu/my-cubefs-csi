@@ -37,7 +37,7 @@ var cmd = &cobra.Command{
 
 func main() {
 	klog.InitFlags(nil)
-	klog.SetLogger(klog.NewKlogr().WithName("my-cubefs-csi").WithValues("user", "majlu"))
+	// klog.SetLogger(klog.NewKlogr().WithName("my-cubefs-csi").WithValues("user", "majlu"))
 	klog.InfoS("System build info", "BuildTime", BuildTime,
 		"Branch", Branch, "CommitID", CommitID)
 	if err := cmd.Execute(); err != nil {
