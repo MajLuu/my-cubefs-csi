@@ -30,3 +30,10 @@ func ParseEndpoint(endpoint string) (string, string, error) {
 
 	return scheme, addr, nil
 }
+
+func ShortenString(str string, n int) string {
+	if len(str) <= n {
+		return str
+	}
+	return str[:n]
+}

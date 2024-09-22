@@ -20,11 +20,10 @@ const (
 
 type CSIDriver struct {
 	*IdentityService
-	cs        *ControllerService
-	ns        *NodeService
-	gsrv      *grpc.Server
-	ClientSet *kubernetes.Clientset
-	options   *Options
+	cs      *ControllerService
+	ns      *NodeService
+	gsrv    *grpc.Server
+	options *Options
 }
 
 func NewCSIDriver(name, nodeId, version string, opts *Options) (*CSIDriver, error) {
@@ -54,21 +53,21 @@ func NewCSIDriver(name, nodeId, version string, opts *Options) (*CSIDriver, erro
 		options:         opts,
 	}
 
-	switch opts.Mode {
-	case ControllerMode:
-		driver.cs = NewControllerService()
-	case NodeMode:
-		driver.ns = NewNodeService(nodeId)
-	case AllMode:
-		driver.cs = NewControllerService()
-		driver.ns = NewNodeService(nodeId)
-	}
-
 	k8sClient, err := driver.NewK8SClientSet()
 	if err != nil {
 		return nil, err
 	}
-	driver.ClientSet = k8sClient
+
+	switch opts.Mode {
+	case ControllerMode:
+		driver.cs = NewControllerService(k8sClient)
+	case NodeMode:
+		driver.ns = NewNodeService(nodeId, k8sClient)
+	case AllMode:
+		driver.cs = NewControllerService(k8sClient)
+		driver.ns = NewNodeService(nodeId, k8sClient)
+	}
+
 	return driver, nil
 }
 
