@@ -19,15 +19,14 @@ import (
 )
 
 const (
-	KVolumeName  = "volName"
-	KMasterAddr  = "masterAddr"
-	KLogLevel    = "logLevel"
-	KLogDir      = "logDir"
-	KOwner       = "owner"
-	KConsulAddr  = "consulAddr"
-	KVolType     = "volType"
-	KEnableToken = "enableToken"
-	KMountPoint  = "mountPoint"
+	KVolumeName = "volName"
+	KMasterAddr = "masterAddr"
+	KLogLevel   = "logLevel"
+	KLogDir     = "logDir"
+	KOwner      = "owner"
+	KConsulAddr = "consulAddr"
+	KVolType    = "volType"
+	KMountPoint = "mountPoint"
 )
 
 const (
@@ -65,6 +64,7 @@ func NewCfsServer(volName string, param map[string]string) (cs *CfsServer, err e
 
 	newVolName := getValueWithDefault(param, KVolumeName, volName)
 	clientConfFile := defaultClientConfPath + newVolName + jsonFileSuffix
+	// Owner ID can be a random string
 	newOwner := util.ShortenString(fmt.Sprintf("csi_%d", time.Now().UnixNano()), 20)
 	param[KMasterAddr] = masterAddr
 	param[KVolumeName] = newVolName
@@ -83,12 +83,11 @@ func NewCfsServer(volName string, param map[string]string) (cs *CfsServer, err e
 func (cs *CfsServer) createVolume(capacityGB int64) (err error) {
 	valName := cs.clientConf[KVolumeName]
 	owner := cs.clientConf[KOwner]
-	token := cs.clientConf[KEnableToken]
 	volType := cs.clientConf[KVolType]
 
 	return cs.forEachMasterAddr("CreateVolume", func(addr string) error {
-		url := fmt.Sprintf("http://%s/admin/createVol?name=%s&capacity=%v&owner=%v&enableToken=%v&volType=%v",
-			addr, valName, capacityGB, owner, token, volType)
+		url := fmt.Sprintf("http://%s/admin/createVol?name=%s&capacity=%v&owner=%v&volType=%v",
+			addr, valName, capacityGB, owner, volType)
 		klog.InfoS("createVol url", "url", url)
 		resp, err := cs.executeRequest(url)
 		if err != nil {
