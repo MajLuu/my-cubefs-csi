@@ -56,8 +56,7 @@ func (nm *NodeMounter) PathExists(path string) (bool, error) {
 
 // NeedResize called at NodeStage to ensure file system is the correct size
 func (nm *NodeMounter) NeedResize(devicePath string, deviceMountPath string) (bool, error) {
-	//TODO implement me
-	panic("implement me")
+	return false, nil
 }
 
 // NewNodeMounter returns a new intsance of NodeMounter.

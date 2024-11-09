@@ -2,16 +2,18 @@ package cubefs
 
 import (
 	"context"
-	"k8s.io/client-go/kubernetes"
 	"os"
+	"sync"
+	"time"
 
-	mountutils "k8s.io/mount-utils"
+	"github.com/majlu/my-cubefs-csi/pkg/mounter"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/majlu/my-cubefs-csi/pkg/mounter"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
+	mountutils "k8s.io/mount-utils"
 )
 
 // Supported access modes
@@ -29,6 +31,7 @@ type NodeService struct {
 	NodeId    string
 	mounter   mounter.Mounter
 	ClientSet *kubernetes.Clientset
+	mutex     sync.Mutex
 	csi.UnimplementedNodeServer
 }
 
@@ -43,6 +46,9 @@ func NewNodeService(nodeId string, clientSet *kubernetes.Clientset) *NodeService
 }
 
 func (n *NodeService) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+
 	klog.V(4).InfoS("NodeStageVolume: called", "args", request)
 	volumeID := request.GetVolumeId()
 	if len(volumeID) == 0 {
@@ -50,22 +56,36 @@ func (n *NodeService) NodeStageVolume(ctx context.Context, request *csi.NodeStag
 	}
 
 	stagingTargetPath := request.GetStagingTargetPath()
+	klog.V(10).InfoS("NodeStageVolume StagingTargetPath", "StagingTargetPath", stagingTargetPath)
 	if len(stagingTargetPath) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Staging target not provided")
 	}
 
-	volCap := request.GetVolumeCapability()
-	if volCap == nil {
-		return nil, status.Error(codes.InvalidArgument, "Volume capability not provided")
-	}
-
-	if !isValidVolumeCapabilities([]*csi.VolumeCapability{volCap}) {
-		return nil, status.Error(codes.InvalidArgument, "Volume capability not supported")
+	pathExists, err := n.mounter.PathExists(stagingTargetPath)
+	if err != nil {
+		klog.ErrorS(err, "PathExists fail", "stagingTargetPath", stagingTargetPath)
+		return nil, status.Error(codes.Internal, err.Error())
+	} else if pathExists {
+		isMountPoint, err := n.mounter.IsMountPoint(stagingTargetPath)
+		if err != nil {
+			klog.ErrorS(err, "IsMountPoint fail", "stagingTargetPath", stagingTargetPath)
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		if isMountPoint {
+			klog.InfoS("NodeStageVolume: volume already mounted", "StagingTargetPath", stagingTargetPath)
+			return &csi.NodeStageVolumeResponse{}, nil
+		}
+	} else {
+		klog.InfoS("NodeStageVolume: creating target path", "StagingTargetPath", stagingTargetPath)
+		if err := n.mounter.MakeDir(stagingTargetPath); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
 	}
 
 	if err := n.mount(stagingTargetPath, request.GetVolumeId(), request.GetVolumeContext()); err != nil {
 		return nil, err
 	}
+
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
@@ -80,23 +100,6 @@ func (n *NodeService) mount(targetPath, volumeName string, param map[string]stri
 			klog.InfoS("removed target path", "targetPath", targetPath)
 		}
 	}()
-
-	pathExists, pathErr := n.mounter.PathExists(targetPath)
-	corruptedMnt := n.mounter.IsCorruptedMnt(pathErr)
-	if pathExists && !corruptedMnt {
-		klog.InfoS("volume already mounted correctly", "stagingTargetPath", targetPath)
-		return
-	}
-
-	if err := mountutils.CleanupMountPoint(targetPath, n.mounter, false); err != nil {
-		retErr = status.Errorf(codes.Internal, "CleanupMountPoint fail, stagingTargetPath: %v error: %v", targetPath, err)
-		return
-	}
-
-	if err := createMountPoint(targetPath); err != nil {
-		retErr = status.Errorf(codes.Internal, "createMountPoint fail, stagingTargetPath: %v error: %v", targetPath, err)
-		return
-	}
 
 	cfsServer, err := NewCfsServer(volumeName, param)
 	if err != nil {
@@ -115,19 +118,6 @@ func (n *NodeService) mount(targetPath, volumeName string, param map[string]stri
 	}
 
 	return
-}
-
-func createMountPoint(root string) error {
-	return os.MkdirAll(root, 0750)
-}
-
-func isValidVolumeCapabilities(v []*csi.VolumeCapability) bool {
-	for _, c := range v {
-		if !isValidCapability(c) {
-			return false
-		}
-	}
-	return true
 }
 
 func isValidCapability(c *csi.VolumeCapability) bool {
@@ -153,23 +143,74 @@ func (n *NodeService) NodeUnstageVolume(ctx context.Context, request *csi.NodeUn
 }
 
 func (n *NodeService) NodePublishVolume(ctx context.Context, request *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+
+	klog.V(4).InfoS("NodePublishVolume: called", "args", request)
+	start := time.Now()
+	stagingTargetPath := request.GetStagingTargetPath()
+	targetPath := request.GetTargetPath()
+	klog.V(10).InfoS("NodePublishVolume", "stagingTargetPath",
+		stagingTargetPath, "targetPath", targetPath)
+
+	if exist, err := n.mounter.PathExists(stagingTargetPath); err != nil {
+		klog.ErrorS(err, "Failed to check staging path", "stagingTargetPath", stagingTargetPath)
+		return nil, status.Error(codes.Internal, err.Error())
+	} else if !exist {
+		klog.ErrorS(nil, "Staging target path does not exist", "stagingTargetPath", stagingTargetPath)
+		return nil, status.Error(codes.NotFound, "Staging target path not found")
+	}
+
+	if exist, err := n.mounter.PathExists(targetPath); err != nil {
+		klog.ErrorS(err, "Failed to check target path", "targetPath", targetPath)
+		return nil, status.Error(codes.Internal, err.Error())
+	} else if exist {
+		klog.V(4).InfoS("Target path already exists", "targetPath", targetPath)
+		isNotMountPoint, err := n.mounter.IsLikelyNotMountPoint(targetPath)
+		if err != nil {
+			klog.ErrorS(err, "Failed to check target path", "targetPath", targetPath)
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		if !isNotMountPoint {
+			klog.V(4).InfoS("Target path is a mount point, skip", "targetPath", targetPath)
+			return &csi.NodePublishVolumeResponse{}, nil
+		}
+	} else {
+		if err := n.mounter.MakeDir(targetPath); err != nil {
+			klog.ErrorS(err, "Failed to create target path", "targetPath", targetPath)
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
+
+	if err := n.mounter.Mount(stagingTargetPath, targetPath, "", []string{"bind"}); err != nil {
+		klog.ErrorS(err, "Failed to bind mount staging target to target path", "stagingTargetPath", stagingTargetPath, "targetPath", targetPath)
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	duration := time.Since(start)
+	klog.InfoS("NodePublishVolume success", "stagingTargetPath", stagingTargetPath, "targetPath", targetPath, "cost", duration)
+
+	return &csi.NodePublishVolumeResponse{}, nil
 }
 
 func (n *NodeService) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+
+	klog.V(10).InfoS("NodeUnpublishVolume", "targetPath", request.GetTargetPath())
+	if err := mountutils.CleanupMountPoint(request.GetTargetPath(), n.mounter, false); err != nil {
+		klog.ErrorS(err, "Failed to unmount target path", "targetPath", request.GetTargetPath())
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
 func (n *NodeService) NodeGetVolumeStats(ctx context.Context, request *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	return &csi.NodeGetVolumeStatsResponse{}, nil
 }
 
 func (n *NodeService) NodeExpandVolume(ctx context.Context, request *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	return &csi.NodeExpandVolumeResponse{}, nil
 }
 
 func (n *NodeService) NodeGetCapabilities(ctx context.Context, request *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
