@@ -72,6 +72,7 @@ spec:
             - --nodeid=$(KUBE_NODE_NAME)
             - --mode=node
             - --log_dir=/cfs/logs
+            - --logtostderr=false
             - --v=10
           env:
             - name: TZ
