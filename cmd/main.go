@@ -27,9 +27,11 @@ var (
 	version    string
 	driverName string
 	kubeConfig string
+	logDir     string
 )
 
 func init() {
+	klog.InitFlags(nil)
 	cmd.Flags().AddGoFlagSet(flag.CommandLine)
 	cmd.PersistentFlags().StringVar(&nodeId, "nodeid", "", "This node's ID")
 	cmd.PersistentFlags().StringVar(&endpoint, "endpoint", "unix:///csi/csi.sock", "CSI endpoint, must be a UNIX socket")
@@ -61,8 +63,6 @@ var cmd = &cobra.Command{
 }
 
 func main() {
-	klog.InitFlags(nil)
-	// klog.SetLogger(klog.NewKlogr().WithName("my-cubefs-csi").WithValues("user", "majlu"))
 	klog.InfoS("System build info", "BuildTime", BuildTime,
 		"Branch", Branch, "CommitID", CommitID)
 	if err := cmd.Execute(); err != nil {

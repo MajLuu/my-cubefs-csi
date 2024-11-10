@@ -16,12 +16,27 @@ spec:
       labels:
         app: my-cubefs-csi-controller
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/role
+                    operator: In
+                    values: [master]
       serviceAccountName: my-cubefs-csi-controller-sa
+      tolerations:
+        - operator: Exists
+          key: node-role.kubernetes.io/control-plane
       containers:
         # provisioner
         - name: csi-provisioner
           image: registry.k8s.io/sig-storage/csi-provisioner:v5.1.0
           imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          args:
+            - --csi-address=$(ADDRESS)
           env:
             - name: TZ
               value: Asia/Shanghai
@@ -47,7 +62,35 @@ spec:
           volumeMounts:
             - mountPath: /csi
               name: socket-dir
-
+        # cfs csi driver
+        - name: csi-driver
+          image: registry.cn-hangzhou.aliyuncs.com/docker-repo-lusx/cubefs:v0.0.1
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          command:
+            - /cfs-csi-driver
+          args:
+            - --endpoint=unix:///csi/csi-controller.sock
+            - --nodeid=$(KUBE_NODE_NAME)
+            - --mode=controller
+            - --log_dir=/cfs/logs
+            - --v=10
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - mountPath: /cfs/logs
+              name: logdir
+            - mountPath: /cfs/bin/cfs-client
+              name: cfs-client
+            - mountPath: /csi
+              name: socket-dir
       restartPolicy: Always
       volumes:
         - hostPath:
@@ -58,5 +101,11 @@ spec:
             path: /var/lib/kubelet/pods
             type: Directory
           name: mountpoint-dir
-
-      
+        - hostPath:
+            path: /opt/cubefs/controller/logs
+            type: DirectoryOrCreate
+          name: logdir
+        - hostPath:
+            path: /usr/bin/cfs-client
+            type: File
+          name: cfs-client

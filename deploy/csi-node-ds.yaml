@@ -12,22 +12,36 @@ spec:
       labels:
         app: my-cfs-csi-node
     spec:
-      schedulerName: my-cubefs-csi-controller-sa
+      serviceAccountName: my-cubefs-csi-controller-sa
+      schedulerName: default-scheduler
       hostNetwork: true
       priorityClassName: system-node-critical
       tolerations:
         - operator: Exists
+      nodeSelector:
+        "kubernetes.io/role": "worker"
       containers:
         # driver registrar
         - name: csi-driver-registrar
           image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.12.0
           args:
-            - "--v=5"
-            - "--csi-address=/csi/csi.sock"
-            - "--kubelet-registration-path=/var/lib/kubelet/plugins/mycubefs.csi.cubefs.com/csi.sock"
+            - --v=5
+            - --csi-address=$(ADDRESS)
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/mycubefs.csi.cubefs.com/csi.sock
           env:
             - name: TZ
               value: Asia/Shanghai
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
           volumeMounts:
             - name: plugin-dir
               mountPath: /csi
@@ -44,13 +58,60 @@ spec:
               memory: 256Mi
           volumeMounts:
             - mountPath: /csi
-              name: socket-dir
+              name: plugin-dir
+        # csi driver
+        - name: csi-driver
+          image: registry.cn-hangzhou.aliyuncs.com/docker-repo-lusx/cubefs:v0.0.1
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+          command:
+            - /cfs-csi-driver
+          args:
+            - --endpoint=$(CSI_ENDPOINT)
+            - --nodeid=$(KUBE_NODE_NAME)
+            - --mode=node
+            - --log_dir=/cfs/logs
+            - --v=10
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
+          volumeMounts:
+            - name: logdir
+              mountPath: /cfs/logs
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet/workdir
+              mountPropagation: Bidirectional
+            - name: device-dir
+              mountPath: /mnt
+              mountPropagation: Bidirectional
+            - mountPath: /csi
+              name: plugin-dir
       volumes:
         - hostPath:
             path: /var/lib/kubelet/plugins/mycubefs.csi.cubefs.com
             type: DirectoryOrCreate
-          name: socket-dir
+          name: plugin-dir
         - hostPath:
             path: /var/lib/kubelet/plugins_registry
-            type: DirectoryOrCreate
+            type: Directory
           name: registration-dir
+        - hostPath:
+            path: /opt/cubefs/node/logs
+            type: DirectoryOrCreate
+          name: logdir
+        - hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+          name: kubelet-dir
+        - hostPath:
+            path: /mnt
+            type: Directory
+          name: device-dir

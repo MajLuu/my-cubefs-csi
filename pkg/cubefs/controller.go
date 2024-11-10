@@ -3,15 +3,14 @@ package cubefs
 import (
 	"context"
 	"fmt"
+	"time"
+
+	"github.com/container-storage-interface/spec/lib/go/csi"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"time"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
-	"github.com/container-storage-interface/spec/lib/go/csi"
 	"k8s.io/klog/v2"
 )
 
@@ -144,38 +143,31 @@ func (cs ControllerService) ControllerGetCapabilities(ctx context.Context, reque
 }
 
 func (cs ControllerService) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	return &csi.CreateSnapshotResponse{}, nil
 }
 
 func (cs ControllerService) DeleteSnapshot(ctx context.Context, request *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	return &csi.DeleteSnapshotResponse{}, nil
 }
 
 func (cs ControllerService) ListSnapshots(ctx context.Context, request *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	return &csi.ListSnapshotsResponse{}, nil
 }
 
 func (cs ControllerService) ControllerExpandVolume(ctx context.Context, request *csi.ControllerExpandVolumeRequest) (*csi.ControllerExpandVolumeResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	return &csi.ControllerExpandVolumeResponse{}, nil
 }
 
 func (cs ControllerService) ControllerGetVolume(ctx context.Context, request *csi.ControllerGetVolumeRequest) (*csi.ControllerGetVolumeResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	return &csi.ControllerGetVolumeResponse{}, nil
 }
 
 func (cs ControllerService) ControllerModifyVolume(ctx context.Context, request *csi.ControllerModifyVolumeRequest) (*csi.ControllerModifyVolumeResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	return &csi.ControllerModifyVolumeResponse{}, nil
 }
 
 func (cs ControllerService) mustEmbedUnimplementedControllerServer() {
-	//TODO implement me
-	panic("implement me")
+	return
 }
 
 func (cs ControllerService) ValidateControllerServiceRequest(c csi.ControllerServiceCapability_RPC_Type) error {
