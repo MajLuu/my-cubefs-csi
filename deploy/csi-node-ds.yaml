@@ -94,6 +94,8 @@ spec:
               mountPropagation: Bidirectional
             - mountPath: /csi
               name: plugin-dir
+            - mountPath: /cfs/bin/cfs-client
+              name: cfs-client
       volumes:
         - hostPath:
             path: /var/lib/kubelet/plugins/mycubefs.csi.cubefs.com
@@ -115,3 +117,7 @@ spec:
             path: /mnt
             type: Directory
           name: device-dir
+        - hostPath:
+            path: /usr/bin/cfs-client
+            type: File
+          name: cfs-client
