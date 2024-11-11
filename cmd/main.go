@@ -27,7 +27,6 @@ var (
 	version    string
 	driverName string
 	kubeConfig string
-	logDir     string
 )
 
 func init() {

@@ -24,6 +24,8 @@ spec:
         # driver registrar
         - name: csi-driver-registrar
           image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.12.0
+          securityContext:
+            privileged: true
           args:
             - --v=5
             - --csi-address=$(ADDRESS)
@@ -87,8 +89,8 @@ spec:
           volumeMounts:
             - name: logdir
               mountPath: /cfs/logs
-            - name: kubelet-dir
-              mountPath: /var/lib/kubelet/workdir
+            - name: mountpoint-dir
+              mountPath: /var/lib/kubelet/pods
               mountPropagation: Bidirectional
             - name: device-dir
               mountPath: /mnt
@@ -111,9 +113,9 @@ spec:
             type: DirectoryOrCreate
           name: logdir
         - hostPath:
-            path: /var/lib/kubelet
+            path: /var/lib/kubelet/pods
             type: Directory
-          name: kubelet-dir
+          name: mountpoint-dir
         - hostPath:
             path: /mnt
             type: Directory
