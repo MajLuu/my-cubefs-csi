@@ -71,6 +71,7 @@ func NewCfsServer(volName string, param map[string]string) (cs *CfsServer, err e
 	param[KOwner] = getValueWithDefault(param, KOwner, newOwner)
 	param[KLogLevel] = getValueWithDefault(param, KLogLevel, defaultLogLevel)
 	param[KLogDir] = defaultLogDir + newVolName
+	// Consul address may be no effect if storage class is not set the param
 	param[KConsulAddr] = getValueWithDefault(param, KConsulAddr, defaultConsulAddr)
 	param[KVolType] = getValueWithDefault(param, KVolType, defaultVolType)
 	return &CfsServer{

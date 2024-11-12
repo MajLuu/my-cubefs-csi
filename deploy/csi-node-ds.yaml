@@ -63,7 +63,7 @@ spec:
               name: plugin-dir
         # csi driver
         - name: csi-driver
-          image: registry.cn-hangzhou.aliyuncs.com/docker-repo-lusx/cubefs:v0.0.1
+          image: registry.cn-hangzhou.aliyuncs.com/docker-repo-lusx/cubefs:v0.0.2
           imagePullPolicy: Always
           securityContext:
             privileged: true

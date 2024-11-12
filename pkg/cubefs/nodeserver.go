@@ -3,6 +3,7 @@ package cubefs
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -22,9 +23,7 @@ const (
 )
 
 var (
-	nodeCaps = []csi.NodeServiceCapability_RPC_Type{
-		csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
-	}
+	nodeCaps []csi.NodeServiceCapability_RPC_Type
 )
 
 type NodeService struct {
@@ -46,46 +45,6 @@ func NewNodeService(nodeId string, clientSet *kubernetes.Clientset) *NodeService
 }
 
 func (n *NodeService) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	n.mutex.Lock()
-	defer n.mutex.Unlock()
-
-	klog.V(4).InfoS("NodeStageVolume: called", "args", request)
-	volumeID := request.GetVolumeId()
-	if len(volumeID) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
-	}
-
-	stagingTargetPath := request.GetStagingTargetPath()
-	klog.V(10).InfoS("NodeStageVolume StagingTargetPath", "StagingTargetPath", stagingTargetPath)
-	if len(stagingTargetPath) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Staging target not provided")
-	}
-
-	pathExists, err := n.mounter.PathExists(stagingTargetPath)
-	if err != nil {
-		klog.ErrorS(err, "PathExists fail", "stagingTargetPath", stagingTargetPath)
-		return nil, status.Error(codes.Internal, err.Error())
-	} else if pathExists {
-		isMountPoint, err := n.mounter.IsMountPoint(stagingTargetPath)
-		if err != nil {
-			klog.ErrorS(err, "IsMountPoint fail", "stagingTargetPath", stagingTargetPath)
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-		if isMountPoint {
-			klog.InfoS("NodeStageVolume: volume already mounted", "StagingTargetPath", stagingTargetPath)
-			return &csi.NodeStageVolumeResponse{}, nil
-		}
-	} else {
-		klog.InfoS("NodeStageVolume: creating target path", "StagingTargetPath", stagingTargetPath)
-		if err := n.mounter.MakeDir(stagingTargetPath); err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-	}
-
-	if err := n.mount(stagingTargetPath, request.GetVolumeId(), request.GetVolumeContext()); err != nil {
-		return nil, err
-	}
-
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
@@ -120,25 +79,7 @@ func (n *NodeService) mount(targetPath, volumeName string, param map[string]stri
 	return
 }
 
-func isValidCapability(c *csi.VolumeCapability) bool {
-	accessMode := c.GetAccessMode().GetMode()
-
-	switch accessMode {
-	case SingleNodeWriter:
-		return true
-	default:
-		klog.InfoS("isValidCapability: access mode is not supported", "accessMode", accessMode)
-		return false
-	}
-}
-
 func (n *NodeService) NodeUnstageVolume(ctx context.Context, request *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
-	stagingTargetPath := request.GetStagingTargetPath()
-	err := mountutils.CleanupMountPoint(stagingTargetPath, n.mounter, false)
-	if err != nil {
-		return nil, err
-	}
-
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
@@ -148,17 +89,35 @@ func (n *NodeService) NodePublishVolume(ctx context.Context, request *csi.NodePu
 
 	klog.V(4).InfoS("NodePublishVolume: called", "args", request)
 	start := time.Now()
-	stagingTargetPath := request.GetStagingTargetPath()
+	// we mount the cubefs volume to /mnt dir firstly and then mount to pods volume path
+	//stagingTargetPath := request.GetStagingTargetPath()
 	targetPath := request.GetTargetPath()
-	klog.V(10).InfoS("NodePublishVolume", "stagingTargetPath",
-		stagingTargetPath, "targetPath", targetPath)
+	klog.V(10).InfoS("NodePublishVolume", "targetPath", targetPath)
 
-	if exist, err := n.mounter.PathExists(stagingTargetPath); err != nil {
-		klog.ErrorS(err, "Failed to check staging path", "stagingTargetPath", stagingTargetPath)
+	// 1. mount the cubefs volume to /mnt dir
+	mntDir := filepath.Join("/mnt", request.GetVolumeId())
+	if exist, err := n.mounter.PathExists(mntDir); err != nil {
+		klog.ErrorS(err, "Failed to check /mnt path", "mntPath", mntDir)
 		return nil, status.Error(codes.Internal, err.Error())
-	} else if !exist {
-		klog.ErrorS(nil, "Staging target path does not exist", "stagingTargetPath", stagingTargetPath)
-		return nil, status.Error(codes.NotFound, "Staging target path not found")
+	} else if !exist { // make new mnt dir
+		klog.InfoS("NodePublishVolume: creating mnt path", "mntDir", mntDir)
+		if err := n.mounter.MakeDir(mntDir); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	} else if isMnt, err := n.mounter.IsMountPoint(mntDir); err == nil {
+		if isMnt {
+			klog.InfoS("NodePublishVolume: volume already mounted", "mntDir", mntDir)
+		} else {
+			klog.InfoS("NodePublishVolume: mount dir is already exist, but is not mount point, skip create it", "mntPath", mntDir)
+		}
+	} else if n.mounter.IsCorruptedMnt(err) {
+		// TODO: remount mntDir mount point as corrupted
+		klog.ErrorS(err, "NodePublishVolume: mount point is corrupted", "mntDir", mntDir)
+		return nil, err
+	}
+
+	if err := n.mount(mntDir, request.GetVolumeId(), request.GetVolumeContext()); err != nil {
+		return nil, err
 	}
 
 	if exist, err := n.mounter.PathExists(targetPath); err != nil {
@@ -182,13 +141,13 @@ func (n *NodeService) NodePublishVolume(ctx context.Context, request *csi.NodePu
 		}
 	}
 
-	if err := n.mounter.Mount(stagingTargetPath, targetPath, "", []string{"bind"}); err != nil {
-		klog.ErrorS(err, "Failed to bind mount staging target to target path", "stagingTargetPath", stagingTargetPath, "targetPath", targetPath)
+	if err := n.mounter.Mount(mntDir, targetPath, "", []string{"bind"}); err != nil {
+		klog.ErrorS(err, "Failed to bind mount mnt path to target path", "mntPath", mntDir, "targetPath", targetPath)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	duration := time.Since(start)
-	klog.InfoS("NodePublishVolume success", "stagingTargetPath", stagingTargetPath, "targetPath", targetPath, "cost", duration)
+	klog.InfoS("NodePublishVolume success", "mntPath", mntDir, "targetPath", targetPath, "cost", duration)
 
 	return &csi.NodePublishVolumeResponse{}, nil
 }
@@ -200,6 +159,11 @@ func (n *NodeService) NodeUnpublishVolume(ctx context.Context, request *csi.Node
 	klog.V(10).InfoS("NodeUnpublishVolume", "targetPath", request.GetTargetPath())
 	if err := mountutils.CleanupMountPoint(request.GetTargetPath(), n.mounter, false); err != nil {
 		klog.ErrorS(err, "Failed to unmount target path", "targetPath", request.GetTargetPath())
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	err := mountutils.CleanupMountPoint(filepath.Join("/mnt", request.GetVolumeId()), n.mounter, false)
+	if err != nil {
+		klog.ErrorS(err, "Failed to unmount mnt path", "mntDir", filepath.Join("/mnt", request.GetVolumeId()))
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &csi.NodeUnpublishVolumeResponse{}, nil
